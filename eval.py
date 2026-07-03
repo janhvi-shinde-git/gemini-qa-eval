@@ -10,6 +10,8 @@ Usage:
 
 Mock mode (no API key needed, for testing the scoring logic offline):
     python eval.py --mock
+
+Format all monetary amounts as strings with exactly two decimal places (e.g. "180.00", not "180" or 180.0).
 """
 
 import os
@@ -34,6 +36,7 @@ Rules:
 - If a field is genuinely not present in the text, use the string "not found" — never invent a value.
 - If multiple transactions are mentioned (e.g. a payment AND a refund/adjustment), extract only
   the PRIMARY payment. Ignore refunds, adjustments, or corrections.
+- Format amount as a string with exactly two decimal places (e.g. "180.00", not "180" or 180.0).
 
 Text:
 \"\"\"{input_text}\"\"\"
@@ -92,6 +95,23 @@ def call_gemini(prompt: str) -> str:
     response = model.generate_content(prompt)
     return response.text
 
+def call_groq(prompt: str) -> str:
+    """Real API call to Groq (Llama 3.3 70B). Requires GROQ_API_KEY env var."""
+    from groq import Groq
+
+    api_key = os.environ.get("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "GROQ_API_KEY not set. Run: $env:GROQ_API_KEY='your-key-here'"
+        )
+
+    client = Groq(api_key=api_key)
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return response.choices[0].message.content
+
 
 MOCK_RESPONSES = {
     "clean": '{"name": "Priya Sharma", "date": "2026-06-12", "amount": "180.00"}',
@@ -116,7 +136,7 @@ def score(actual: dict, expected: dict) -> dict:
     """Field-by-field pass/fail, plus overall verdict and a one-line reason."""
     field_results = {}
     for field, expected_val in expected.items():
-        actual_val = actual.get(field, "").strip()
+        actual_val = str(actual.get(field, "")).strip()
         field_results[field] = (actual_val == expected_val)
 
     overall_pass = all(field_results.values())
@@ -142,9 +162,9 @@ def run_case(case: dict) -> dict:
     prompt = PROMPT_TEMPLATE.format(input_text=case["input_text"])
 
     if MOCK_MODE:
-        raw = call_gemini_mock(prompt, case_id=case["id"])
+        raw = call_groq_mock(prompt, case_id=case["id"])
     else:
-        raw = call_gemini(prompt)
+        raw = call_groq(prompt)
 
     try:
         actual = parse_response(raw)
